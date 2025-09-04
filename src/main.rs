@@ -1,17 +1,61 @@
 use std::io;
-fn main() {
-    println!("Enter a mathematical expression:");
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let expr = input.trim();
-    let tokens = tokenize(expr);
-    let rpn = to_rpn(tokens);
-    let result = eval_rpn(rpn);
+use postgres::{Client, NoTls};
 
-    println!("{} = {}", expr, result);
+fn main() {
+    // Connect to Postgres
+    let mut client = Client::connect(
+        "host=localhost user=calculi_user password=kaloy dbname=calculi_db",
+        NoTls,
+    ).expect("Failed to connect to database");
+
+    loop {
+        println!("Enter a mathematical expression (or :history / :h to view past calculations, :q to quit):");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let expr = input.trim();
+
+        // Commands
+        if expr == ":q" {
+            println!("Goodbye!");
+            break;
+        } else if expr == ":history" || expr == ":h" {
+            show_history(&mut client);
+            continue;
+        }
+
+        // Normal expression
+        if expr.is_empty() {
+            continue;
+        }
+
+        let tokens = tokenize(expr);
+        let rpn = to_rpn(tokens);
+        let result = eval_rpn(rpn);
+
+        println!("{} = {}", expr, result);
+
+        // Save history
+        client.execute(
+            "INSERT INTO history (expression, result) VALUES ($1, $2)",
+            &[&expr, &result.to_string()],
+        ).expect("Failed to insert into history");
+    }
 }
 
+fn show_history(client: &mut Client) {
+    println!("--- Calculation History ---");
+    for row in client.query("SELECT id, expression, result, created_at FROM history ORDER BY id DESC LIMIT 10", &[])
+        .expect("Failed to fetch history") 
+    {
+        let id: i32 = row.get(0);
+        let expr: String = row.get(1);
+        let result: String = row.get(2);
+        let created_at: chrono::NaiveDateTime = row.get(3);
 
+        println!("[{}] {} = {} ({})", id, expr, result, created_at);
+    }
+    println!("----------------------------");
+}
 
 #[derive(Debug, Clone)]
 enum Token {
@@ -49,7 +93,6 @@ fn tokenize(expr: &str) -> Vec<Token> {
 
     tokens
 }
-
 
 fn precedence(op: char) -> i32 {
     match op {
@@ -120,3 +163,4 @@ fn eval_rpn(tokens: Vec<Token>) -> f64 {
 
     stack.pop().unwrap()
 }
+ 
